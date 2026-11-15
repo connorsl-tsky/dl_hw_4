@@ -1327,3 +1327,342 @@ Also check whether the assignment requires the GCN to be the submitted model. If
 
 # Summary 14
 
+ - signal is in graph level summary statistics - pooling is throwing it away
+ - overfitting
+ - tabular model first, GCN as second step?
+ - [x] stack nodes into (total_nodes, 18) and calc skew
+ - [x] stratified k fold
+ - [x] dropout to 0.1, hidden size to 32-64
+ - [ ] yeah. so maybe explain this stuff a little better
+
+ - [ ] how do i add to GCN
+
+
+
+ # Prompt 15
+Here's what I got for the skew and the mean/std of the stratified rfc/etc/hgbc or whatever it is. X_all and y_all were built with summarize for each of those classifiers. 
+
+SKEW: [-13.65   1.82   1.55   0.22   1.54   1.72   1.63   1.68   1.42   1.77
+1.55   1.33   1.3    1.65   1.67   1.64   1.64   1.42]
+0.6645833333333333 0.03448530282759761 - rfc
+0.6895833333333333 0.03186887195995491 - extra tress classifier
+0.6583333333333333 0.015309310892394868 - hist gradient boosting classifier
+
+I also think you should know I am really struggling to follow along with your advice. This is my first time doing graph-based deep learning, and I don't have a strong background in statistics, machine learning, or deep learning to begin with. So if you could explain what it is that you're suggesting and why you're suggesting with this lack of backgroudn in mind that would be beautiful. Also my lack of python skills are being put to the test, so maybe extra context for the code snippets might also be helpful. 
+
+But what I understand is that right now we are diagnosing possible solutions to fix the overfitting and low accuracy/f1 score to try to achieve something in the .7 range. I understand that when the features are skewed we should apply the np.log1p() (or whatever the function is) make the features appeared less skewed for the model, but anything related to the cross-validation is alien to me.  
+
+# Response 15
+
+Thanks for telling me. I've been throwing a lot of jargon at you, so I'll slow down, explain the ideas, and then give a short plan.
+
+## What you've actually done so far
+
+**Cross-validation:** you already ran it. Your earlier setup scored the model on one 80/20 split, and the validation part was only 96 graphs, so one lucky or unlucky split could swing the score by about 5 points. Cross-validation fixes this by splitting the 480 graphs into 5 equal chunks. The model trains on 4 chunks and is scored on the 5th, and this repeats so every chunk gets a turn as the test. You then average the 5 scores. `cross_val_score(...)` in my snippet did all of that in one line.
+
+So your numbers mean:
+- Random forest: **0.665** on average, with a ±0.03 wobble between splits
+- Extra trees: **0.690** (±0.03)
+- Gradient boosting: **0.658** (±0.015)
+
+These three are within the wobble of each other, so none is clearly better. The 0.729 from before was probably a lucky split. A realistic target is **about 0.65-0.70**, which matches the leaderboard's 0.709. You aren't far off.
+
+## About skewness
+
+Skew measures whether a feature has a long tail on one side. Positive means a few very large values, and negative means a few very small ones. Yours are:
+- **Features 1-17 (about 1.3-1.8):** mildly right-skewed. This is common and not alarming.
+- **Feature 0 (-13.65):** extremely skewed. A handful of nodes have very unusual values there. It's worth looking at the raw numbers.
+
+Skew only matters for the GCN. The tree models (random forest etc.) don't care. Also, `np.log1p(x)` computes log(1 + x), which only works for values of 0 or more. Your `X_train` is already standardized (centered at 0), so it contains negative numbers and `log1p` would produce `nan` errors. You'd apply it to the raw features, before scaling. Here's a snippet to inspect the raw values of feature 0:
+
+```python
+import ast
+import numpy as np
+import pandas as pd
+
+train = pd.read_csv("train.csv")
+
+# Each row's node_features is a text string like "[[1.0, 2.0, ...], [...]]".
+# ast.literal_eval turns that text into a real Python list; np.array makes it a table.
+raw = [np.array(ast.literal_eval(s), dtype=np.float32) for s in train["node_features"]]
+
+# Stack every node from every graph into one big table: (total_nodes, 18)
+all_nodes = np.concatenate(raw, axis=0)
+
+# Look at the spread of feature 0 and one other feature for comparison
+for j in [0, 1]:
+    col = all_nodes[:, j]
+    print(f"feature {j}: min={col.min():.3g}, median={np.median(col):.3g}, max={col.max():.3g}")
+```
+
+If feature 0's minimum is wildly far from its median, there are outliers. If feature 1's minimum is 0 or more, `log1p` is safe for it. Paste me the output and I'll tell you which features to transform.
+
+## The big picture
+
+1. The **tabular models** (random forest etc.) get about 0.67-0.69. They work from a one-row-per-graph summary table (averages, spreads, sizes, degree stats), so graph size is built in and each graph's stats can be compared directly.
+2. Your **GCN** gets about 0.40. Its last step averages all the node values into one vector, which erases information like graph size and how spread out the values are. The tables keep that information, so they win.
+3. **Overfitting** just means the model memorizes the training graphs instead of learning patterns. That's why train accuracy (0.555) is much higher than validation (0.396). With only 384 graphs, it's easy for the model to do this.
+
+## What I'd suggest next
+
+**Option A (simplest): submit the tabular model.** Train extra trees on all 480 graphs and submit. That's likely about 0.69, competitive with the leaderboard. It's only a few lines on top of what you have.
+
+**Option B (if the assignment requires a GCN): a hybrid.** Keep your GCN, but also feed it the summary table row for each graph. The GCN learns from the graph's shape, the table supplies the statistics, and a final layer combines the two. This usually closes most of the gap. It's more code, so I'd rather write the full updated file with comments on every part than send more snippets.
+
+One question decides this: **does the assignment require the submitted model to be a GCN?** If yes, I'll write the hybrid version of `main_claude.py` with plain-language comments throughout. If not, I'll write the short Option A script. Either way, I'll keep the explanations at beginner level.
+
+# Summary 15
+
+ooookay i am beginning to understand
+cross validation is to determine if the validation is lucky or not, so it computes an average
+so these graph classifiers (ML not DL?) are a little better at determining the information than GCN
+
+so next let's give it the output, and give it some context for the assignment
+
+# Prompt 16
+
+Here's the raw data summary:
+feature 0: min=-213, median=6, max=91
+feature 1: min=0, median=12.4, max=149
+
+So yes, this validates that feature 1 (and likely the other features), are mildly right skewed, while feature 0 is heavily heavily left skewed. I do not know what each of the features correspond to, but the instructor did say that the dataset is the ENZYMES dataset, which I wasn't really able to find much information about online.
+
+The assignment requires us to 'try' GCN - a 1 layer and 2 layer approach. We are to report the accuracy and F1 score of those models, but the option is open to try other models. The class is Deep Learning, so using a ML appraoch like ETC might be a little iffy, but I personally have no problem submitting it to the leaderboard. AFAIK we aren't graded on how well our model does - as long as it can do better than the benchmark which is around .59. Most of the grade comes from the report. And since I'm not compeletely ditching GCN, I don't suppose it matters if one of the models I try isn't 'technically' DL. I also would like to get this assignment done as early as possible since I have a lot of other work I need to do as the semester wraps up. These types of assignments that I'm doing now in the past have taken weeks, and this is only the second day so far, so if I can submit it today that would absolutely make my weekend. The only other thing bothering me is if the expectation is that GCN should do better than about .4, that might raise a small alarm, but I doubt it'll be a huge deal. Maybe this assignment would've been a bit easier if I did the pytorch graph package, as the instructor recommended. 
+
+# Response 16
+
+You're in better shape than it feels, and finishing today is realistic.
+
+## Should 0.4 raise an alarm?
+
+Not a big one. ENZYMES is a well-known benchmark (600 protein graphs, 6 enzyme classes, 18 numeric node features, 3 node types). From what I remember, simple GCN-style models with mean pooling usually land around 0.4-0.6 on it, with a lot of run-to-run variation. Your 0.40 is on the low side but plausible, and it's a good thing to explain in your report: mean pooling throws away information, and 384 graphs is a small dataset. Also, the benchmark of 0.59 is beaten by your tabular model (about 0.67-0.69), so you have a safe submission available.
+
+## Step 1: submit the tabular model today
+
+Add this to the bottom of `main_claude.py`, after your existing code. It uses the `summarize` function and `X_all`/`y_all` you already built.
+
+```python
+from sklearn.ensemble import ExtraTreesClassifier
+
+# Train on all 480 labeled graphs (train + validation together).
+etc = ExtraTreesClassifier(n_estimators=500, random_state=0)
+etc.fit(X_all, y_all)
+
+# Load the test file and apply the SAME preprocessing and scaler as before.
+test = pd.read_csv("test.csv")
+X_test, adj_test = preprocess(test, test=True, scale=scaler)
+
+# Turn every test graph into one row of summary numbers, like X_all.
+X_test_tab = np.stack([summarize(x.numpy(), a) for x, a in zip(X_test, adj_test)])
+
+# The model predicts 0-5, but your original labels were shifted down by 1, so shift back up.
+pred = etc.predict(X_test_tab) + 1
+
+pd.DataFrame({"graph_id": test["graph_id"], "label": pred}).to_csv(
+    "etc_submission.csv", index=False)
+```
+
+**Important bug to check:** in `preprocess` you subtract 1 from the labels, so the model works with 0-5. Your existing GCN submission code writes those 0-5 values straight to the CSV, which would score badly if the real labels are 1-6. Run `print(train["label"].min(), train["label"].max())` once. If it prints `1 6`, add `+ 1` to the GCN predictions too (I did that above for the tabular model).
+
+## Step 2: two small GCN tweaks
+
+You don't need a big rewrite. These two changes should help a bit, and you can report the result either way.
+
+**a) Clip extreme values.** Feature 0 has a few huge outliers (-213 against a median of 6), which can disrupt training. In `scale_graph_features`, change the scaling line to cap values at ±5 standard deviations. `np.clip` just forces numbers into a range:
+
+```python
+scaled_continuous = np.clip(scaler.transform(continuous_part), -5, 5)
+```
+
+This works for all features, so you don't need `log1p`, and it avoids the negative-number problem.
+
+**b) Pool with the max as well as the mean.** Add this layer next to `MeanPool`:
+
+```python
+@keras.saving.register_keras_serializable(package="gcn")
+class MeanMaxPool(layers.Layer):
+    def call(self, x):   # x: (nodes, hidden)
+        # Average over nodes, and also take the biggest value over nodes,
+        # then place the two side by side -> shape (1, 2*hidden).
+        return tf.concat([tf.reduce_mean(x, axis=0, keepdims=True),
+                          tf.reduce_max(x, axis=0, keepdims=True)], axis=1)
+```
+
+Then in `build_gcn`, replace `MeanPool()(h)` with `MeanMaxPool()(h)`, and change the defaults to `hidden_dim=32` and `dropout=0.2` when you call it (e.g. `build_gcn(21, 32, 6, n_layers=1, dropout=0.2)`).
+
+Run it once with `n_layers=1` and once with `n_layers=2`, and write down the validation accuracy and F1 for each. Those two numbers are what the assignment asks for. Set `SAVE_NAME` differently for each run so they don't overwrite each other.
+
+## Step 3: what to put in the report
+
+You have a good story already:
+- **1-layer vs. 2-layer GCN:** the numbers from step 2.
+- **Why the GCN struggles:** mean/max pooling compresses each graph into a few numbers, there are only 384 training graphs, and training accuracy was well above validation accuracy (overfitting).
+- **Tabular baseline:** summary statistics of each graph plus extra trees reached about 0.69 in 5-fold cross-validation (the average over five different train/validation splits, which is more trustworthy than a single split). This shows that useful information is in graph-level statistics.
+- **Skewed features:** feature 0 had a few extreme outliers, and you handled them by clipping.
+- **Honest limitations:** no hyperparameter search, and results vary between splits by about ±3-5 points.
+
+As for PyTorch Geometric, switching now would cost you more time than it saves. You already have a working pipeline, and PyG would give you the same kind of GCN.
+
+If anything errors, paste the traceback and I'll fix it. If you want, I can also help you word the report sections once you have your numbers.
+
+# Summary 16
+
+Okay, it's settled. We might be getting out of here before lunch. 
+
+# Prompt 17
+
+quick thing, the submission requires uploading the weights of the best model (which in this case is ETC). Is it possible to save/load weights for an ETC?
+
+# Response 17
+
+Yes, though not as "weights". An extra trees model is a collection of decision trees (the splits and thresholds each tree learned), not a set of weight matrices like a neural network. You save the whole fitted model object to a file, and the standard tool for that is `joblib`, which comes installed with scikit-learn.
+
+## Saving
+
+```python
+import joblib
+
+# Save the fitted model to a file. The name is up to you; .joblib is the convention.
+joblib.dump(etc, "etc_model.joblib")
+
+# The scaler is also needed to reproduce your predictions: test data has to be
+# standardized with the same numbers as the training data, so save it too.
+joblib.dump(scaler, "scaler.joblib")
+```
+
+## Loading
+
+```python
+etc = joblib.load("etc_model.joblib")
+scaler = joblib.load("scaler.joblib")
+
+# Then predict as before, using the summary-table rows for the test graphs:
+pred = etc.predict(X_test_tab) + 1
+```
+
+## Things to know
+
+- **The model file only holds the trees.** It doesn't include your preprocessing code (`preprocess`, `summarize`). Whoever loads it needs those functions too, so if the instructor will run it, submit your script along with the file and include the scaler.
+- **The model expects the same input layout it was trained on.** Each row must come from `summarize` in exactly the same order, since the trees refer to features by column position.
+- **Use the same scikit-learn version to load it.** A file saved on one version can fail or behave differently on a much newer one. You can check yours with `import sklearn; print(sklearn.__version__)` and mention it in the report.
+- **File size:** with 500 trees on 480 graphs it should be a few MB at most. Check with `ls -lh etc_model.joblib`, and if the upload limit is tight, use `n_estimators=200`.
+- **`.pkl` is also fine.** `joblib` is just a pickle format that's better with big numpy arrays. Only load these files from sources you trust, because loading can run code.
+
+I'd double-check the assignment's wording on the upload format. If it says something like "a `.keras` file" or "a `.pt` file", you may need to ask the instructor whether a `.joblib` file is acceptable. If it just says "weights of your best model", `.joblib` almost certainly counts, since it's how scikit-learn models are saved.
+
+# Prompt 18
+
+last thing, I need a quick function to output the AUC curve.
+
+# Response 18
+
+Here's a function for it. With 6 classes there isn't a single ROC curve. The standard approach is **one-vs-rest**: for each class, treat it as "this class vs. everything else" and draw one curve. The closer a curve hugs the top-left corner, the better (the AUC, area under the curve, is 1.0 for perfect and 0.5 for coin-flip guessing).
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.metrics import roc_curve, auc, roc_auc_score
+from sklearn.preprocessing import label_binarize
+
+def plot_auc(y_true, y_proba, save_path="roc_curve.png", title="ROC curves (one-vs-rest)"):
+    """
+    y_true:  array of true labels, 0-5, shape (n_graphs,)
+    y_proba: array of predicted probabilities, shape (n_graphs, 6).
+             Each row is one graph; each column is the model's confidence in one class.
+    """
+    n_classes = y_proba.shape[1]
+
+    # Turn labels like 3 into [0,0,0,1,0,0], so each class gets its own yes/no column.
+    y_onehot = label_binarize(y_true, classes=list(range(n_classes)))
+
+    plt.figure(figsize=(7, 6))
+    for c in range(n_classes):
+        # roc_curve sweeps a threshold and returns the false-positive and true-positive rates
+        fpr, tpr, _ = roc_curve(y_onehot[:, c], y_proba[:, c])
+        plt.plot(fpr, tpr, label=f"class {c + 1} (AUC = {auc(fpr, tpr):.2f})")
+
+    # Average of the 6 per-class AUCs
+    macro_auc = roc_auc_score(y_onehot, y_proba, average="macro")
+
+    plt.plot([0, 1], [0, 1], "k--", label="random guessing")
+    plt.xlabel("False positive rate")
+    plt.ylabel("True positive rate")
+    plt.title(f"{title}\nmacro AUC = {macro_auc:.3f}")
+    plt.legend(loc="lower right")
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.show()
+    return macro_auc
+```
+
+## Using it with the extra trees model
+
+The curve should be built from predictions on graphs the model did **not** train on. Your final `etc` was trained on all 480 graphs, so scoring it on those would look unrealistically perfect. `cross_val_predict` solves this: it runs the same 5-fold process as before and returns each graph's probabilities from the fold where that graph was held out.
+
+```python
+from sklearn.model_selection import StratifiedKFold, cross_val_predict
+from sklearn.ensemble import ExtraTreesClassifier
+
+cv = StratifiedKFold(5, shuffle=True, random_state=0)
+proba = cross_val_predict(ExtraTreesClassifier(n_estimators=500, random_state=0),
+                          X_all, y_all, cv=cv, method="predict_proba")
+
+plot_auc(y_all, proba, save_path="etc_roc.png", title="Extra Trees ROC")
+```
+
+## Using it with the GCN
+
+The GCN outputs raw scores ("logits"), not probabilities, so apply softmax first and use the validation set:
+
+```python
+val_logits = predict(model, X_val, adj_val)
+val_proba = tf.nn.softmax(val_logits).numpy()
+plot_auc(y_val, val_proba, save_path="gcn1_roc.png", title="1-layer GCN ROC")
+```
+
+Note: in your file the validation labels are unpacked as `t_val`, so use that name (or fix the typo) in the call above.
+
+Put both pictures in your report. The side-by-side comparison of GCN vs. extra trees makes a nice point. If you plug this into your `AUC = True` block, the `pass` there is where the call goes.
+
+# Prompt 19
+
+I'm getting these two warnings, and the AUC plot isn't showing
+
+main_claude.py:72: UserWarning: 'where' used without 'out', expect uninitialized memory in output. If this is intentional, use out=None.
+  deg_inv_sqrt = np.power(row_sum, -0.5, where=row_sum > 0)
+main_claude.py:353: UserWarning: FigureCanvasAgg is non-interactive, and thus cannot be shown
+  plt.show()
+
+# Response 19
+
+Both warnings are harmless, and the AUC plot is probably already saved to disk.
+
+## 1. The `where` warning (line 72)
+
+`np.power(row_sum, -0.5, where=row_sum > 0)` only computes the power where the condition is true. Without an `out=` array, the other positions are left as random leftover memory. Your next line (`deg_inv_sqrt[row_sum == 0] = 0.0`) overwrites those positions, so the result is correct. Still, it's easy to silence properly by giving it an array of zeros to fill in:
+
+```python
+deg_inv_sqrt = np.power(row_sum, -0.5, out=np.zeros_like(row_sum), where=row_sum > 0)
+```
+
+You can then delete the `deg_inv_sqrt[row_sum == 0] = 0.0` line, since the zeros are already there. (Because you add self-loops, every row sum is at least 1, so that branch never triggers in practice anyway.)
+
+## 2. The plot not showing (line 353)
+
+Matplotlib is using a "non-interactive" backend (`Agg`), which can draw pictures into files but can't open a window. This is common when running from a terminal, over SSH, or in some IDE setups. The plot isn't lost, though: `plt.savefig(...)` runs before `plt.show()`, so the image is already written to the file you named (e.g. `etc_roc.png` or `gcn1_roc.png`) in the folder you ran the script from. Open that file directly.
+
+Since you don't need a pop-up window, the cleanest fix is to replace `plt.show()` in `plot_auc` with `plt.close()`:
+
+```python
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close()   # free the figure; no window needed
+    return macro_auc
+```
+
+`plt.close()` also prevents a subtle problem. If you call `plot_auc` twice (once for the extra trees model, once for the GCN) without closing, the second call can draw on top of the first figure's leftovers.
+
+If you do want a window to pop up, you'd need a GUI backend installed (for example `pip install pyqt5`, then `import matplotlib; matplotlib.use("QtAgg")` at the very top of your script), but saving to PNG is simpler and is what you need for the report anyway.
+
+# Summary 19
+
+oh i'm just stupid, i didn't see the png file. 
+waste of tokens, sorry claude

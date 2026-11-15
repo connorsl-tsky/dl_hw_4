@@ -4,10 +4,10 @@
  - [x] init the hw report - 11/14/26 843am
  - [x] pseudo - 11/14/26 859am
  - [x] initial research / prompting - 11/14/26 1200pm (distracted for 45 min + chores)
- - [ ] design and develop
- - [ ] answer step 1 data questions
- - [ ] submit best model to kaggle
- - [ ] answer remaining hw questions: 1) f1/acc of gcn's, 2) loss function, 3) optimization, 4) model selection, 5) auc curve of model performance, 
+ - [x] design and develop - 11/15/26 1007am
+ - [x] hw report
+ - [x] submit best model to kaggle - 11/15/26 1043am
+ - [x] clean up code
  - [ ] create zip file of connor_slutsky_hw4.zip with 1) hw report, 2) prompt report, 3) all code, and 4) best model weights
 
 
